@@ -1,0 +1,19 @@
+{
+  "name": "AppSettings",
+  "type": "object",
+  "properties": {
+    "alert_email": {
+      "type": "string",
+      "description": "Email address(es) to send alerts and reminders to"
+    },
+    "lot_lat": {
+      "type": "number",
+      "description": "Lot center latitude (map default)"
+    },
+    "lot_lng": {
+      "type": "number",
+      "description": "Lot center longitude (map default)"
+    }
+  },
+  "required": []
+}

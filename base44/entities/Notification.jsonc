@@ -1,0 +1,37 @@
+{
+  "name": "Notification",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "departed",
+        "returned",
+        "overdue"
+      ],
+      "description": "Type of notification event"
+    },
+    "repair_pass_id": {
+      "type": "string",
+      "description": "ID of the RepairPass this notification is about"
+    },
+    "title": {
+      "type": "string",
+      "description": "Notification title"
+    },
+    "message": {
+      "type": "string",
+      "description": "Notification message body"
+    },
+    "read": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the user has read this notification"
+    }
+  },
+  "required": [
+    "type",
+    "title",
+    "message"
+  ]
+}

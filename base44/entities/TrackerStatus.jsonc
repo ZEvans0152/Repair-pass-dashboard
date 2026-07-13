@@ -1,0 +1,59 @@
+{
+  "name": "TrackerStatus",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Cognosos device/tracker ID"
+    },
+    "battery_level": {
+      "type": "number",
+      "description": "Battery percentage (0-100)"
+    },
+    "battery_status": {
+      "type": "number",
+      "description": "Cognosos battery status code"
+    },
+    "attached": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this tracker is linked to a known RepairPass vehicle"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Current GPS latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Current GPS longitude"
+    },
+    "zone": {
+      "type": "string",
+      "description": "Current Cognosos geofence zone"
+    },
+    "vin": {
+      "type": "string",
+      "description": "Vehicle VIN if attached"
+    },
+    "stock_number": {
+      "type": "string",
+      "description": "Vehicle stock number if attached"
+    },
+    "year": {
+      "type": "string",
+      "description": "Vehicle year if attached"
+    },
+    "make": {
+      "type": "string",
+      "description": "Vehicle make if attached"
+    },
+    "model": {
+      "type": "string",
+      "description": "Vehicle model if attached"
+    }
+  },
+  "required": [
+    "device_id",
+    "battery_level"
+  ]
+}
