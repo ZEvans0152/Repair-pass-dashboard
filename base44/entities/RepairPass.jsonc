@@ -1,0 +1,172 @@
+{
+  "name": "RepairPass",
+  "type": "object",
+  "properties": {
+    "vin": {
+      "type": "string",
+      "description": "Vehicle Identification Number"
+    },
+    "make": {
+      "type": "string",
+      "description": "Vehicle make"
+    },
+    "model": {
+      "type": "string",
+      "description": "Vehicle model"
+    },
+    "year": {
+      "type": "string",
+      "description": "Vehicle model year"
+    },
+    "color": {
+      "type": "string",
+      "description": "Exterior color"
+    },
+    "mileage": {
+      "type": "string",
+      "description": "Odometer reading"
+    },
+    "stock_number": {
+      "type": "string",
+      "description": "Stock number"
+    },
+    "client": {
+      "type": "string",
+      "description": "Client name"
+    },
+    "dealership": {
+      "type": "string",
+      "description": "Destination dealership"
+    },
+    "dealership_address": {
+      "type": "string",
+      "description": "Dealership street address"
+    },
+    "dealer_contact": {
+      "type": "string",
+      "description": "Dealership contact name"
+    },
+    "dealer_phone": {
+      "type": "string",
+      "description": "Dealership contact phone"
+    },
+    "auction_contact": {
+      "type": "string",
+      "description": "Auction contact name"
+    },
+    "auction_phone": {
+      "type": "string",
+      "description": "Auction contact phone"
+    },
+    "transporter": {
+      "type": "string",
+      "description": "Transport company name"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Reason the vehicle was sent out"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form notes about this unit"
+    },
+    "latest_note": {
+      "type": "string",
+      "description": "Most recent note added to this unit (for quick-glance display)"
+    },
+    "latest_note_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the most recent note was added"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending_departure",
+        "out",
+        "sent_for_pickup",
+        "returned"
+      ],
+      "default": "pending_departure",
+      "description": "Current repair pass status"
+    },
+    "pending_transition": {
+      "type": "string",
+      "description": "Status transition detected on the last sync awaiting confirmation on the next sync ('departed' or 'returned', empty = none)"
+    },
+    "no_tracker": {
+      "type": "boolean",
+      "default": false,
+      "description": "Unit was not found in Cognosos, assumed to have no tracker"
+    },
+    "exclude_from_sync": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, this vehicle is skipped during Cognosos location sync"
+    },
+    "archived": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this returned pass has been archived to history"
+    },
+    "departure_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the vehicle left the lot"
+    },
+    "return_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the vehicle returned to the lot"
+    },
+    "sent_for_pickup_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the vehicle was marked as sent for pickup (bring back)"
+    },
+    "send_out_form_sent_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the Send Out Form email was last sent for this unit"
+    },
+    "current_lat": {
+      "type": "number",
+      "description": "Current GPS latitude"
+    },
+    "current_lng": {
+      "type": "number",
+      "description": "Current GPS longitude"
+    },
+    "current_zone": {
+      "type": "string",
+      "description": "Current Cognosos geofence zone name (empty = off lot)"
+    },
+    "last_location_update": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last GPS refresh from Cognosos"
+    },
+    "cognosos_asset_id": {
+      "type": "string",
+      "description": "Cognosos asset/tag ID for this vehicle"
+    }
+  },
+  "required": [
+    "vin",
+    "make",
+    "model",
+    "stock_number"
+  ]
+}

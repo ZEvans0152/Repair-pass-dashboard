@@ -1,0 +1,22 @@
+{
+  "name": "RepairNote",
+  "type": "object",
+  "properties": {
+    "repair_pass_id": {
+      "type": "string",
+      "description": "ID of the RepairPass this note belongs to"
+    },
+    "content": {
+      "type": "string",
+      "description": "Note text"
+    },
+    "author": {
+      "type": "string",
+      "description": "Name or email of who added the note"
+    }
+  },
+  "required": [
+    "repair_pass_id",
+    "content"
+  ]
+}

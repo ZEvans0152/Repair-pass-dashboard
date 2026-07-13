@@ -1,0 +1,75 @@
+{
+  "name": "SoldTracker",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Cognosos device/tracker ID"
+    },
+    "asset_identifier": {
+      "type": "string",
+      "description": "Stock number / asset identifier"
+    },
+    "sold_date": {
+      "type": "string",
+      "description": "Date the vehicle was sold"
+    },
+    "left_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Date and time the vehicle left the lot (detected by Cognosos zone change)"
+    },
+    "buyer": {
+      "type": "string",
+      "description": "Buyer name"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Last known GPS latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Last known GPS longitude"
+    },
+    "zone": {
+      "type": "string",
+      "description": "Last known zone"
+    },
+    "vin": {
+      "type": "string",
+      "description": "Vehicle VIN"
+    },
+    "stock_number": {
+      "type": "string",
+      "description": "Stock number from repair pass"
+    },
+    "year": {
+      "type": "string",
+      "description": "Vehicle year"
+    },
+    "make": {
+      "type": "string",
+      "description": "Vehicle make"
+    },
+    "model": {
+      "type": "string",
+      "description": "Vehicle model"
+    },
+    "color": {
+      "type": "string",
+      "description": "Vehicle color"
+    },
+    "client": {
+      "type": "string",
+      "description": "Client/consignor name"
+    },
+    "detached": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the tracker has been physically detached from the vehicle"
+    }
+  },
+  "required": [
+    "device_id"
+  ]
+}
