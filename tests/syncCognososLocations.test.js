@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isOffLotZone,
+  normalizeZone,
   distanceMeters,
   escapeHtml,
   computeSyncChanges,
@@ -46,6 +47,21 @@ describe('isOffLotZone', () => {
     expect(isOffLotZone('On Lot')).toBe(false);
     expect(isOffLotZone('')).toBe(false);
     expect(isOffLotZone(undefined)).toBe(false);
+  });
+});
+
+describe('normalizeZone', () => {
+  it('treats placeholder zone text as no zone', () => {
+    expect(normalizeZone('Not in a zone')).toBe('');
+    expect(normalizeZone('not in zone')).toBe('');
+    expect(normalizeZone('No Zone')).toBe('');
+  });
+
+  it('keeps real zone names', () => {
+    expect(normalizeZone('Main Lot')).toBe('Main Lot');
+    expect(normalizeZone('Left Lot')).toBe('Left Lot');
+    expect(normalizeZone('')).toBe('');
+    expect(normalizeZone(undefined)).toBe('');
   });
 });
 
@@ -173,13 +189,83 @@ describe('computeSyncChanges — returns', () => {
     expect(changes.pending_transition).toBe('');
   });
 
-  it('does not arm a return on an empty (ambiguous) zone', () => {
+  it('does not arm a return on an empty zone when GPS is unavailable', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '' }),
       movement: null,
       lotLat: null,
       lotLng: null,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('arms a GPS-based return when there is no zone but GPS is on the lot', () => {
+    const { changes, notificationType } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: null,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('returned');
+    expect(notificationType).toBeNull();
+  });
+
+  it('commits a GPS-based return on the second consecutive sync and labels the zone', () => {
+    const { changes, notificationType } = computeSyncChanges({
+      pass: { ...outPass(), pending_transition: 'returned' },
+      node: makeNode({ current_zone_text: '' }),
+      movement: null,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.status).toBe('returned');
+    expect(changes.return_time).toBe(NOW);
+    expect(changes.current_zone).toBe('On Lot');
+    expect(notificationType).toBe('returned');
+  });
+
+  it('treats a "Not in a zone" placeholder like an empty zone for GPS-based returns', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: 'Not in a zone' }),
+      movement: null,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('returned');
+  });
+
+  it('does not arm a GPS-based return while an off-lot movement entry is still open', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T16:00:00Z' } },
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('arms a GPS-based return once the off-lot movement entry has an exit', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T16:00:00Z', left: '2026-07-14T10:00:00Z' } },
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('returned');
+  });
+
+  it('does not arm a GPS-based return when GPS is far from the lot', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '', latitude: LOT.lotLat + 0.1 }),
+      movement: null,
+      ...LOT,
       now: NOW,
     });
     expect(changes.pending_transition).toBe('');

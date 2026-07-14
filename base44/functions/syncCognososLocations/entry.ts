@@ -58,6 +58,14 @@ export function isOffLotZone(zoneName) {
     return /left\s*(lot|site)/i.test(zoneName || '');
 }
 
+// Cognosos sometimes reports placeholder text ("Not in a zone", "No zone")
+// instead of an empty zone — treat those as no zone at all so they are never
+// mistaken for a real named zone.
+export function normalizeZone(zoneText) {
+    const z = (zoneText || '').trim();
+    return /^(no|not)\s*(in)?\s*(a)?\s*zone$/i.test(z) ? '' : z;
+}
+
 export function distanceMeters(lat1, lng1, lat2, lng2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -71,14 +79,14 @@ export function distanceMeters(lat1, lng1, lat2, lng2) {
 // latest movement event, and the lot center, compute the entity update and
 // whether a departed/returned notification fires. Exported for unit tests.
 export function computeSyncChanges({ pass, node, movement, lotLat, lotLng, now }) {
-    let zone = node.current_zone_text || '';
+    let zone = normalizeZone(node.current_zone_text);
     // Node endpoint sometimes reports an empty zone — fall back to the latest
     // movement event: if the asset hasn't left that zone, it's still in it.
     // Never use an off-lot movement event as the zone fallback — stale "Left Lot"
     // events can falsely trigger departures. Departures must come from the
     // node's own current_zone_text.
     if (!zone && movement && !movement.date?.left && !isOffLotZone(movement.zone?.name)) {
-        zone = movement.zone?.name || '';
+        zone = normalizeZone(movement.zone?.name);
     }
     // If no zone is reported at all, assume the vehicle is still on the lot
     const explicitlyOffLot = isOffLotZone(zone);
@@ -127,6 +135,16 @@ export function computeSyncChanges({ pass, node, movement, lotLat, lotLng, now }
             (movementTime && !movementIsOffLot && (!pass.departure_time || movementTime > pass.departure_time));
         if (movementConfirmsReturn) desired = 'returned';
     }
+    // GPS-based return: Cognosos reports no zone at all, but the tracker's GPS
+    // puts the vehicle on the lot. Vetoed while the movement history still
+    // actively places the vehicle inside an off-lot zone it hasn't exited.
+    // The two-consecutive-sync confirmation below applies as usual.
+    const offLotMovementStillOpen = !!(movement && movementIsOffLot && !movement.date?.left);
+    if (!desired && zone === '' && gpsNearLot === true &&
+        (pass.status === 'out' || pass.status === 'sent_for_pickup') &&
+        !offLotMovementStillOpen) {
+        desired = 'returned';
+    }
 
     // Require the same transition on two consecutive syncs before committing
     let notificationType = null;
@@ -140,6 +158,11 @@ export function computeSyncChanges({ pass, node, movement, lotLat, lotLng, now }
             const validReturnTime = movementTime && !movementIsOffLot &&
                 (!pass.departure_time || movementTime > pass.departure_time);
             changes.return_time = validReturnTime ? movementTime : now;
+            // GPS-based returns have no zone name — label the location so the
+            // dashboard immediately shows "On lot" instead of blank
+            if (changes.current_zone === '' && gpsNearLot === true) {
+                changes.current_zone = 'On Lot';
+            }
         }
         notificationType = desired;
     } else {
