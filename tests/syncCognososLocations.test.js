@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isOffLotZone,
+  normalizeZone,
   distanceMeters,
   escapeHtml,
   computeSyncChanges,
@@ -46,6 +47,21 @@ describe('isOffLotZone', () => {
     expect(isOffLotZone('On Lot')).toBe(false);
     expect(isOffLotZone('')).toBe(false);
     expect(isOffLotZone(undefined)).toBe(false);
+  });
+});
+
+describe('normalizeZone', () => {
+  it('treats placeholder zone text as no zone', () => {
+    expect(normalizeZone('Not in a zone')).toBe('');
+    expect(normalizeZone('not in zone')).toBe('');
+    expect(normalizeZone('No Zone')).toBe('');
+  });
+
+  it('keeps real zone names', () => {
+    expect(normalizeZone('Main Lot')).toBe('Main Lot');
+    expect(normalizeZone('Left Lot')).toBe('Left Lot');
+    expect(normalizeZone('')).toBe('');
+    expect(normalizeZone(undefined)).toBe('');
   });
 });
 
@@ -173,13 +189,106 @@ describe('computeSyncChanges — returns', () => {
     expect(changes.pending_transition).toBe('');
   });
 
-  it('does not arm a return on an empty (ambiguous) zone', () => {
+  it('does not arm a return on an empty zone when GPS is unavailable', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '' }),
       movement: null,
       lotLat: null,
       lotLng: null,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  // The vehicle drove back through an on-lot zone after departure but parked
+  // in an unzoned spot (real case: BMW M3, stock 1530664) — an
+  // entered-and-exited on-lot movement corroborates the on-lot GPS.
+  const corroboratingMovement = {
+    zone: { name: 'Dealer Holding' },
+    date: { entered: '2026-07-14T11:06:54Z', left: '2026-07-14T11:12:14Z' },
+  };
+
+  it('arms a GPS-based return when no zone but GPS on lot with corroborating movement', () => {
+    const { changes, notificationType } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: corroboratingMovement,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('returned');
+    expect(notificationType).toBeNull();
+  });
+
+  it('commits a GPS-based return on the second consecutive sync and labels the zone', () => {
+    const { changes, notificationType } = computeSyncChanges({
+      pass: { ...outPass(), pending_transition: 'returned' },
+      node: makeNode({ current_zone_text: '' }),
+      movement: corroboratingMovement,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.status).toBe('returned');
+    expect(changes.return_time).toBe('2026-07-14T11:06:54.000Z');
+    expect(changes.current_zone).toBe('On Lot');
+    expect(notificationType).toBe('returned');
+  });
+
+  it('treats a "Not in a zone" placeholder like an empty zone for GPS-based returns', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: 'Not in a zone' }),
+      movement: corroboratingMovement,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('returned');
+  });
+
+  // Real case (Honda Accord, stock 1536814): tracker out of coverage at a
+  // dealership — Cognosos reported the site's default coordinates (meters
+  // from the lot center) with no zone, and the only movement history was the
+  // departure. GPS alone must never trigger a return.
+  it('does not arm a GPS-based return when the only movement is the departure (stale/default GPS)', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T15:00:00Z', left: '2026-07-13T20:20:00Z' } },
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('does not arm a GPS-based return with no movement history at all', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: null,
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('does not arm a GPS-based return when the on-lot movement predates the departure', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: { zone: { name: 'Back Lot' }, date: { entered: '2026-07-12T08:00:00Z' } },
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('does not arm a GPS-based return when GPS is far from the lot', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '', latitude: LOT.lotLat + 0.1 }),
+      movement: corroboratingMovement,
+      ...LOT,
       now: NOW,
     });
     expect(changes.pending_transition).toBe('');
