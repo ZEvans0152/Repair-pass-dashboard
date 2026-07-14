@@ -136,13 +136,18 @@ export function computeSyncChanges({ pass, node, movement, lotLat, lotLng, now }
         if (movementConfirmsReturn) desired = 'returned';
     }
     // GPS-based return: Cognosos reports no zone at all, but the tracker's GPS
-    // puts the vehicle on the lot. Vetoed while the movement history still
-    // actively places the vehicle inside an off-lot zone it hasn't exited.
-    // The two-consecutive-sync confirmation below applies as usual.
-    const offLotMovementStillOpen = !!(movement && movementIsOffLot && !movement.date?.left);
+    // puts the vehicle on the lot. GPS alone can lie — when a tracker is out
+    // of coverage Cognosos reports the site's default coordinates (seen in
+    // production: a vehicle "4m from the lot center" while physically at a
+    // dealership) — so a GPS-based return additionally requires the movement
+    // history to corroborate: the latest movement event must be an entry into
+    // an on-lot zone after the vehicle departed. The two-consecutive-sync
+    // confirmation below applies as usual.
+    const gpsReturnCorroborated = !!(movement && !movementIsOffLot && movementTime &&
+        (!pass.departure_time || movementTime > pass.departure_time));
     if (!desired && zone === '' && gpsNearLot === true &&
         (pass.status === 'out' || pass.status === 'sent_for_pickup') &&
-        !offLotMovementStillOpen) {
+        gpsReturnCorroborated) {
         desired = 'returned';
     }
 

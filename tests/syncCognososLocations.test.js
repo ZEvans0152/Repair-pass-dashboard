@@ -201,11 +201,19 @@ describe('computeSyncChanges — returns', () => {
     expect(changes.pending_transition).toBe('');
   });
 
-  it('arms a GPS-based return when there is no zone but GPS is on the lot', () => {
+  // The vehicle drove back through an on-lot zone after departure but parked
+  // in an unzoned spot (real case: BMW M3, stock 1530664) — an
+  // entered-and-exited on-lot movement corroborates the on-lot GPS.
+  const corroboratingMovement = {
+    zone: { name: 'Dealer Holding' },
+    date: { entered: '2026-07-14T11:06:54Z', left: '2026-07-14T11:12:14Z' },
+  };
+
+  it('arms a GPS-based return when no zone but GPS on lot with corroborating movement', () => {
     const { changes, notificationType } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '' }),
-      movement: null,
+      movement: corroboratingMovement,
       ...LOT,
       now: NOW,
     });
@@ -217,12 +225,12 @@ describe('computeSyncChanges — returns', () => {
     const { changes, notificationType } = computeSyncChanges({
       pass: { ...outPass(), pending_transition: 'returned' },
       node: makeNode({ current_zone_text: '' }),
-      movement: null,
+      movement: corroboratingMovement,
       ...LOT,
       now: NOW,
     });
     expect(changes.status).toBe('returned');
-    expect(changes.return_time).toBe(NOW);
+    expect(changes.return_time).toBe('2026-07-14T11:06:54.000Z');
     expect(changes.current_zone).toBe('On Lot');
     expect(notificationType).toBe('returned');
   });
@@ -231,40 +239,55 @@ describe('computeSyncChanges — returns', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: 'Not in a zone' }),
-      movement: null,
+      movement: corroboratingMovement,
       ...LOT,
       now: NOW,
     });
     expect(changes.pending_transition).toBe('returned');
   });
 
-  it('does not arm a GPS-based return while an off-lot movement entry is still open', () => {
+  // Real case (Honda Accord, stock 1536814): tracker out of coverage at a
+  // dealership — Cognosos reported the site's default coordinates (meters
+  // from the lot center) with no zone, and the only movement history was the
+  // departure. GPS alone must never trigger a return.
+  it('does not arm a GPS-based return when the only movement is the departure (stale/default GPS)', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '' }),
-      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T16:00:00Z' } },
+      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T15:00:00Z', left: '2026-07-13T20:20:00Z' } },
       ...LOT,
       now: NOW,
     });
     expect(changes.pending_transition).toBe('');
   });
 
-  it('arms a GPS-based return once the off-lot movement entry has an exit', () => {
+  it('does not arm a GPS-based return with no movement history at all', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '' }),
-      movement: { zone: { name: 'Left Lot' }, date: { entered: '2026-07-13T16:00:00Z', left: '2026-07-14T10:00:00Z' } },
+      movement: null,
       ...LOT,
       now: NOW,
     });
-    expect(changes.pending_transition).toBe('returned');
+    expect(changes.pending_transition).toBe('');
+  });
+
+  it('does not arm a GPS-based return when the on-lot movement predates the departure', () => {
+    const { changes } = computeSyncChanges({
+      pass: outPass(),
+      node: makeNode({ current_zone_text: '' }),
+      movement: { zone: { name: 'Back Lot' }, date: { entered: '2026-07-12T08:00:00Z' } },
+      ...LOT,
+      now: NOW,
+    });
+    expect(changes.pending_transition).toBe('');
   });
 
   it('does not arm a GPS-based return when GPS is far from the lot', () => {
     const { changes } = computeSyncChanges({
       pass: outPass(),
       node: makeNode({ current_zone_text: '', latitude: LOT.lotLat + 0.1 }),
-      movement: null,
+      movement: corroboratingMovement,
       ...LOT,
       now: NOW,
     });
