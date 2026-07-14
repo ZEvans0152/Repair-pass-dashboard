@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { Loader2, Tag, MapPin, User, Calendar, ExternalLink, Download, Link, Unlink } from 'lucide-react';
+import { Loader2, Tag, User, Calendar, ExternalLink, Download, Link, Unlink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
 import VehicleMovementsDialog from '@/components/VehicleMovementsDialog';
 import { startOfDay, startOfWeek, startOfMonth, endOfWeek, subWeeks, parseISO, isAfter, isSameDay, isWithinInterval, format } from 'date-fns';
 
@@ -25,6 +26,7 @@ export default function SoldTrackers() {
   const [movementsOpen, setMovementsOpen] = useState(false);
 
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const { data: trackers = [], isLoading, error } = useQuery({
     queryKey: ['soldTrackers'],
@@ -35,6 +37,11 @@ export default function SoldTrackers() {
   const toggleDetach = useMutation({
     mutationFn: ({ id, detached }) => base44.entities.SoldTracker.update(id, { detached }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['soldTrackers'] }),
+    onError: (err) => toast({
+      variant: 'destructive',
+      title: 'Failed to update tracker',
+      description: err?.message || 'The change was not saved. Please try again.',
+    }),
   });
 
   const handleToggleDetach = useCallback((e, t) => {

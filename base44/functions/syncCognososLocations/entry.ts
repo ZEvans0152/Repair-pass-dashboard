@@ -2,7 +2,15 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 const API_BASE = 'https://api.cognosos.net';
 
+// Cache the Cognosos token across invocations of a warm instance —
+// Cognito ID tokens are valid for ~1 hour.
+let cachedToken = null;
+let cachedTokenAt = 0;
+const TOKEN_TTL_MS = 50 * 60 * 1000;
+
 async function getCognososToken() {
+    if (cachedToken && Date.now() - cachedTokenAt < TOKEN_TTL_MS) return cachedToken;
+
     // Step 1: get idp config (client_id + issuer_url)
     const configRes = await fetch(`${API_BASE}/config?category=idp`);
     if (!configRes.ok) throw new Error(`Cognosos config fetch failed: ${configRes.status} ${await configRes.text()}`);
@@ -31,12 +39,135 @@ async function getCognososToken() {
     const auth = await authRes.json();
     const idToken = auth?.AuthenticationResult?.IdToken;
     if (!idToken) throw new Error('No IdToken in auth response: ' + JSON.stringify(auth));
+    cachedToken = idToken;
+    cachedTokenAt = Date.now();
     return idToken;
+}
+
+export function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// Zones like "Left Lot" / "Left Site" mean the vehicle is OFF the lot
+export function isOffLotZone(zoneName) {
+    return /left\s*(lot|site)/i.test(zoneName || '');
+}
+
+export function distanceMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// Pure decision logic for one pass: given the pass, its Cognosos node, the
+// latest movement event, and the lot center, compute the entity update and
+// whether a departed/returned notification fires. Exported for unit tests.
+export function computeSyncChanges({ pass, node, movement, lotLat, lotLng, now }) {
+    let zone = node.current_zone_text || '';
+    // Node endpoint sometimes reports an empty zone — fall back to the latest
+    // movement event: if the asset hasn't left that zone, it's still in it.
+    // Never use an off-lot movement event as the zone fallback — stale "Left Lot"
+    // events can falsely trigger departures. Departures must come from the
+    // node's own current_zone_text.
+    if (!zone && movement && !movement.date?.left && !isOffLotZone(movement.zone?.name)) {
+        zone = movement.zone?.name || '';
+    }
+    // If no zone is reported at all, assume the vehicle is still on the lot
+    const explicitlyOffLot = isOffLotZone(zone);
+    const onLot = !explicitlyOffLot;
+    // No zone reported but GPS is near the lot center => label it "On Lot".
+    // Only for vehicles already believed on the lot — GPS can be stale for out vehicles.
+    if (zone === '' && (pass.status === 'pending_departure' || pass.status === 'returned') &&
+        lotLat != null && lotLng != null &&
+        node.latitude != null && node.longitude != null &&
+        distanceMeters(Number(node.latitude), Number(node.longitude), lotLat, lotLng) <= 1200) {
+        zone = 'On Lot';
+    }
+    const changes = {
+        current_zone: zone,
+        last_location_update: now,
+    };
+    if (node.latitude != null && node.longitude != null) {
+        changes.current_lat = Number(node.latitude);
+        changes.current_lng = Number(node.longitude);
+    }
+
+    const movementTime = movement?.date?.entered ? new Date(movement.date.entered).toISOString() : null;
+    // Only trust the movement event's timestamp when it matches the transition:
+    // a departure should come from an off-lot zone event, a return from an on-lot one.
+    const movementIsOffLot = isOffLotZone(movement?.zone?.name);
+
+    // GPS cross-check: true/false when both tracker GPS and lot center are known, null = unknown
+    let gpsNearLot = null;
+    if (lotLat != null && lotLng != null && node.latitude != null && node.longitude != null) {
+        gpsNearLot = distanceMeters(Number(node.latitude), Number(node.longitude), lotLat, lotLng) <= 1200;
+    }
+
+    // Detect the desired transition this sync
+    let desired = null;
+    if (!onLot && pass.status === 'pending_departure') {
+        desired = 'departed';
+    } else if (onLot && zone !== '' && gpsNearLot !== false &&
+        (pass.status === 'out' || pass.status === 'sent_for_pickup')) {
+        // An empty zone is ambiguous (tracker may simply not be reporting a zone),
+        // so a return requires a real named on-lot zone AND, when GPS is available,
+        // the tracker must actually be near the lot.
+        // Stale GPS can still re-trigger lot zones, so when movement history exists
+        // it must corroborate: the latest movement event must be an entry into a
+        // named on-lot zone that happened after the vehicle departed.
+        const movementConfirmsReturn = !movement ||
+            (movementTime && !movementIsOffLot && (!pass.departure_time || movementTime > pass.departure_time));
+        if (movementConfirmsReturn) desired = 'returned';
+    }
+
+    // Require the same transition on two consecutive syncs before committing
+    let notificationType = null;
+    if (desired && pass.pending_transition === desired) {
+        changes.pending_transition = '';
+        if (desired === 'departed') {
+            changes.status = 'out';
+            changes.departure_time = (movementTime && movementIsOffLot) ? movementTime : now;
+        } else {
+            changes.status = 'returned';
+            const validReturnTime = movementTime && !movementIsOffLot &&
+                (!pass.departure_time || movementTime > pass.departure_time);
+            changes.return_time = validReturnTime ? movementTime : now;
+        }
+        notificationType = desired;
+    } else {
+        changes.pending_transition = desired || '';
+    }
+
+    return { changes, notificationType };
+}
+
+// A write can be skipped when nothing substantive changed and the stored
+// last_location_update is still fresh — cuts most DB writes on quiet syncs.
+export function canSkipWrite(pass, changes, notificationType, now, freshMs = 15 * 60 * 1000) {
+    if (notificationType) return false;
+    if ('status' in changes || 'no_tracker' in changes) return false;
+    if ((changes.current_zone || '') !== (pass.current_zone || '')) return false;
+    if ((changes.pending_transition || '') !== (pass.pending_transition || '')) return false;
+    if ('current_lat' in changes &&
+        (changes.current_lat !== pass.current_lat || changes.current_lng !== pass.current_lng)) return false;
+    if (!pass.last_location_update) return false;
+    return new Date(now).getTime() - new Date(pass.last_location_update).getTime() < freshMs;
 }
 
 Deno.serve(async (req) => {
     try {
         const base44 = createClientFromRequest(req);
+
+        let body = {};
+        try { body = await req.json() || {}; } catch { /* no body */ }
 
         const token = await getCognososToken();
 
@@ -85,7 +216,11 @@ Deno.serve(async (req) => {
         // Update all non-archived repair passes — single list call, filter in memory
         const allActive = ['pending_departure', 'out', 'sent_for_pickup', 'returned'];
         const allPasses = await base44.asServiceRole.entities.RepairPass.list('', 10000);
-        const passes = allPasses.filter(p => allActive.includes(p.status) && !p.archived && !p.exclude_from_sync);
+        let passes = allPasses.filter(p => allActive.includes(p.status) && !p.archived && !p.exclude_from_sync);
+        // Targeted mode: sync just one pass (used right after creating a pass)
+        if (body.only_pass_id) {
+            passes = passes.filter(p => p.id === body.only_pass_id);
+        }
 
         // Resolve each pass's node: stock number first, then VIN, then stored asset ID
         function resolveNode(p) {
@@ -118,16 +253,10 @@ Deno.serve(async (req) => {
         const settingsList = await base44.asServiceRole.entities.AppSettings.list();
         const lotLat = settingsList[0]?.lot_lat;
         const lotLng = settingsList[0]?.lot_lng;
-        function distanceMeters(lat1, lng1, lat2, lng2) {
-            const R = 6371000;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLng = (lng2 - lng1) * Math.PI / 180;
-            const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-            return 2 * R * Math.asin(Math.sqrt(a));
-        }
+        const alertEmail = settingsList[0]?.alert_email;
 
         let updated = 0;
+        let skipped = 0;
         const now = new Date().toISOString();
         for (const p of passes) {
             const node = resolveNode(p);
@@ -167,37 +296,14 @@ Deno.serve(async (req) => {
             }
 
             const movement = await getLastMovement(node);
-            let zone = node.current_zone_text || '';
-            // Node endpoint sometimes reports an empty zone — fall back to the latest
-            // movement event: if the asset hasn't left that zone, it's still in it.
-            // Never use an off-lot movement event as the zone fallback — stale "Left Lot"
-            // events can falsely trigger departures. Departures must come from the
-            // node's own current_zone_text.
-            if (!zone && movement && !movement.date?.left && !/left\s*(lot|site)/i.test(movement.zone?.name || '')) {
-                zone = movement.zone?.name || '';
-            }
-            // Zones like "Left Lot" / "Left Site" mean the vehicle is OFF the lot
-            // If no zone is reported at all, assume the vehicle is still on the lot
-            const explicitlyOffLot = /left\s*(lot|site)/i.test(zone);
-            let onLot = !explicitlyOffLot;
-            // No zone reported but GPS is near the lot center => label it "On Lot".
-            // Only for vehicles already believed on the lot — GPS can be stale for out vehicles.
-            if (zone === '' && (p.status === 'pending_departure' || p.status === 'returned') &&
-                lotLat != null && lotLng != null &&
-                node.latitude != null && node.longitude != null &&
-                distanceMeters(Number(node.latitude), Number(node.longitude), lotLat, lotLng) <= 1200) {
-                zone = 'On Lot';
-            }
-            const changes = {
-                current_zone: zone,
-                last_location_update: now,
-            };
+            const { changes, notificationType } = computeSyncChanges({
+                pass: p, node, movement, lotLat, lotLng, now,
+            });
+
             if (p.no_tracker) {
                 changes.no_tracker = false;
                 // Send email alert: tracker found for a previously tracker-less vehicle
                 try {
-                    const settingsList = await base44.asServiceRole.entities.AppSettings.list();
-                    const alertEmail = settingsList[0]?.alert_email;
                     if (alertEmail) {
                         const vehicleName = `${p.year || ''} ${p.make} ${p.model}`.trim();
                         const html = `
@@ -208,14 +314,14 @@ Deno.serve(async (req) => {
                             </div>
                             <div style="padding:24px;">
                               <span style="display:inline-block;background:#0ea5e91A;color:#0ea5e9;font-size:12px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;padding:4px 12px;border-radius:999px;">Tracker Attached</span>
-                              <h1 style="font-size:20px;color:#0f172a;margin:14px 0 6px;">Tracker detected on ${vehicleName}</h1>
+                              <h1 style="font-size:20px;color:#0f172a;margin:14px 0 6px;">Tracker detected on ${escapeHtml(vehicleName)}</h1>
                               <p style="font-size:14px;color:#475569;margin:0 0 20px;line-height:1.5;">A GPS tracker has been detected on a vehicle that was previously listed as having no tracker.</p>
                               <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;">
-                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Vehicle</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${vehicleName}</td></tr>
-                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Stock #</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${p.stock_number}</td></tr>
-                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">VIN</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${p.vin}</td></tr>
-                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Client</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${p.client || '—'}</td></tr>
-                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;white-space:nowrap;">Tracker ID</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;">${node.asset_identifier || node.id || '—'}</td></tr>
+                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Vehicle</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${escapeHtml(vehicleName)}</td></tr>
+                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Stock #</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${escapeHtml(p.stock_number)}</td></tr>
+                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">VIN</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${escapeHtml(p.vin)}</td></tr>
+                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">Client</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${escapeHtml(p.client || '—')}</td></tr>
+                                <tr><td style="padding:10px 16px;font-size:13px;color:#64748b;white-space:nowrap;">Tracker ID</td><td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;">${escapeHtml(node.asset_identifier || node.id || '—')}</td></tr>
                               </table>
                             </div>
                             <div style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;">
@@ -241,55 +347,11 @@ Deno.serve(async (req) => {
                     console.log('Tracker-found email failed:', emailErr.message);
                 }
             }
-            if (node.latitude != null && node.longitude != null) {
-                changes.current_lat = Number(node.latitude);
-                changes.current_lng = Number(node.longitude);
-            }
 
-            const movementTime = movement?.date?.entered ? new Date(movement.date.entered).toISOString() : null;
-            // Only trust the movement event's timestamp when it matches the transition:
-            // a departure should come from an off-lot zone event, a return from an on-lot one.
-            const movementIsOffLot = /left\s*(lot|site)/i.test(movement?.zone?.name || '');
-
-            // GPS cross-check: true/false when both tracker GPS and lot center are known, null = unknown
-            let gpsNearLot = null;
-            if (lotLat != null && lotLng != null && node.latitude != null && node.longitude != null) {
-                gpsNearLot = distanceMeters(Number(node.latitude), Number(node.longitude), lotLat, lotLng) <= 1200;
-            }
-
-            // Detect the desired transition this sync
-            let desired = null;
-            if (!onLot && p.status === 'pending_departure') {
-                desired = 'departed';
-            } else if (onLot && zone !== '' && gpsNearLot !== false &&
-                (p.status === 'out' || p.status === 'sent_for_pickup')) {
-                // An empty zone is ambiguous (tracker may simply not be reporting a zone),
-                // so a return requires a real named on-lot zone AND, when GPS is available,
-                // the tracker must actually be near the lot.
-                // Stale GPS can still re-trigger lot zones, so when movement history exists
-                // it must corroborate: the latest movement event must be an entry into a
-                // named on-lot zone that happened after the vehicle departed.
-                const movementConfirmsReturn = !movement ||
-                    (movementTime && !movementIsOffLot && (!p.departure_time || movementTime > p.departure_time));
-                if (movementConfirmsReturn) desired = 'returned';
-            }
-
-            // Require the same transition on two consecutive syncs before committing
-            let notificationType = null;
-            if (desired && p.pending_transition === desired) {
-                changes.pending_transition = '';
-                if (desired === 'departed') {
-                    changes.status = 'out';
-                    changes.departure_time = (movementTime && movementIsOffLot) ? movementTime : now;
-                } else {
-                    changes.status = 'returned';
-                    const validReturnTime = movementTime && !movementIsOffLot &&
-                        (!p.departure_time || movementTime > p.departure_time);
-                    changes.return_time = validReturnTime ? movementTime : now;
-                }
-                notificationType = desired;
-            } else {
-                changes.pending_transition = desired || '';
+            // Nothing substantive changed and the timestamp is fresh => skip the write
+            if (canSkipWrite(p, changes, notificationType, now)) {
+                skipped++;
+                continue;
             }
 
             await base44.asServiceRole.entities.RepairPass.update(p.id, changes);
@@ -310,11 +372,9 @@ Deno.serve(async (req) => {
             }
         }
 
-        const body = { nodesFetched: nodes.length, passesTracked: passes.length, updated };
-        let debugFlag = false;
-        try { debugFlag = (await req.json())?.debug === true; } catch { /* no body */ }
-        if (debugFlag) body.sampleNode = nodes[0] || null;
-        return Response.json(body);
+        const responseBody = { nodesFetched: nodes.length, passesTracked: passes.length, updated, skipped };
+        if (body.debug === true) responseBody.sampleNode = nodes[0] || null;
+        return Response.json(responseBody);
     } catch (error) {
         console.error(error.message);
         return Response.json({ error: error.message }, { status: 500 });

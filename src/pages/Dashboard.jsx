@@ -3,6 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { useToast } from '@/components/ui/use-toast';
 import { Plus } from 'lucide-react';
 
 import StatsCards from '../components/repair/StatsCards';
@@ -16,10 +17,13 @@ export default function Dashboard() {
   const [selectedPass, setSelectedPass] = useState(null);
   const [sendOutPass, setSendOutPass] = useState(null);
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
+  // Fetch only active (non-archived) passes so the limit never pushes
+  // older active vehicles off the dashboard as history grows.
   const { data: passes = [] } = useQuery({
     queryKey: ['repairPasses'],
-    queryFn: () => base44.entities.RepairPass.list('-created_date', 200),
+    queryFn: () => base44.entities.RepairPass.filter({ archived: false }, '-created_date', 200),
     refetchInterval: 15000,
   });
 
@@ -29,21 +33,30 @@ export default function Dashboard() {
       status: 'pending_departure',
       ...(data.notes ? { latest_note: data.notes, latest_note_at: new Date().toISOString() } : {}),
     }),
-    onSuccess: async () => {
+    onSuccess: async (created) => {
       queryClient.invalidateQueries({ queryKey: ['repairPasses'] });
       setShowForm(false);
-      // Immediately check Cognosos for this unit's location
-      await base44.functions.invoke('syncCognososLocations', {});
+      // Immediately check Cognosos for this unit's location (just this unit,
+      // not a full sync of every tracker on the lot)
+      await base44.functions.invoke('syncCognososLocations', created?.id ? { only_pass_id: created.id } : {});
       queryClient.invalidateQueries({ queryKey: ['repairPasses'] });
     },
+    onError: (err) => toast({
+      variant: 'destructive',
+      title: 'Failed to create repair pass',
+      description: err?.message || 'Please try again.',
+    }),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => base44.entities.RepairPass.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repairPasses'] }),
+    onError: (err) => toast({
+      variant: 'destructive',
+      title: 'Update failed',
+      description: err?.message || 'The change was not saved. Please try again.',
+    }),
   });
-
-  const active = passes.filter((p) => !p.archived);
 
   return (
     <div className="p-4 md:p-8 space-y-6">
@@ -65,7 +78,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="p-0">
             <RepairPassTable
-              passes={active}
+              passes={passes}
               onMarkDeparted={(p) =>
                 updateMutation.mutate({ id: p.id, data: { status: 'out', departure_time: new Date().toISOString() } })
               }
