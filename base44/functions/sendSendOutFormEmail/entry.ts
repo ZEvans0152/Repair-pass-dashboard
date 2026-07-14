@@ -1,6 +1,27 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 import { jsPDF } from 'npm:jspdf@4.2.1';
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Convert bytes to base64 in chunks — spreading the whole array as
+// arguments overflows the call stack once the PDF grows past ~100KB.
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 const SECTIONS = [
   {
     title: 'VEHICLE INFORMATION',
@@ -131,7 +152,7 @@ Deno.serve(async (req) => {
         : 'Tracker status unknown — Please verify';
 
     const pdfBytes = generatePdfBytes(form);
-    const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
+    const pdfBase64 = bytesToBase64(pdfBytes);
 
     const bodyText = pass.no_tracker
       ? [
@@ -166,13 +187,13 @@ Deno.serve(async (req) => {
                <td style="width:32px;vertical-align:top;font-size:20px;">&#128680;</td>
                <td style="font-size:14px;color:#991b1b;">
                  <strong style="font-size:16px;">&#9888; NO TRACKER FOUND</strong><br/>
-                 <span style="color:#991b1b;">${trackerStatus}</span>
+                 <span style="color:#991b1b;">${escapeHtml(trackerStatus)}</span>
                </td>
              </tr>
            </table>
          </div>`
       : `<p style="background:#f0fdf4;padding:12px;border-left:4px solid #16a34a;border-radius:4px;">
-           <strong>Tracker Status:</strong> ${trackerStatus}
+           <strong>Tracker Status:</strong> ${escapeHtml(trackerStatus)}
          </p>`;
 
     const verifyText = pass.no_tracker
@@ -181,12 +202,12 @@ Deno.serve(async (req) => {
 
     const htmlBody = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;">
-      <h2 style="color:#1e2a4a;">Repair Pass Request — Stock #${stock}</h2>
+      <h2 style="color:#1e2a4a;">Repair Pass Request — Stock #${escapeHtml(stock)}</h2>
       ${trackerWarning}
       <p>Please have a repair pass made for this unit and send it to:</p>
       <p style="margin-left:16px;">
-        <strong>${dealership}</strong><br/>
-        ${address}
+        <strong>${escapeHtml(dealership)}</strong><br/>
+        ${escapeHtml(address)}
       </p>
       ${verifyText}
       <p>Attached is the <strong>Send Out Form</strong> for this vehicle.</p>

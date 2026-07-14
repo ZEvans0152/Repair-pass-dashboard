@@ -16,8 +16,9 @@ export default function NotificationBell() {
     refetchInterval: 30000,
   });
 
-  const markReadMutation = useMutation({
-    mutationFn: (id) => base44.entities.Notification.update(id, { read: true }),
+  const markAllReadMutation = useMutation({
+    mutationFn: (unread) =>
+      Promise.all(unread.map((n) => base44.entities.Notification.update(n.id, { read: true }))),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
   });
 
@@ -26,9 +27,9 @@ export default function NotificationBell() {
   const handleOpen = (open) => {
     setOpen(open);
     if (open) {
-      // Mark all as read
+      // Mark all as read in one action, then refresh the list once
       const unread = notifications.filter((n) => !n.read);
-      unread.forEach((n) => markReadMutation.mutate(n.id));
+      if (unread.length > 0) markAllReadMutation.mutate(unread);
     }
   };
 

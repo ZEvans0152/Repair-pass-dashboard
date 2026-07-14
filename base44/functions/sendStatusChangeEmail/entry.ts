@@ -6,13 +6,22 @@ function reportErrorHref(vehicle, stock, vin) {
     return `mailto:zevans@carolinaautoauction.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function buildEmailHtml({ accentColor, badgeText, title, intro, rows, mapUrl, reportHref }) {
     const rowsHtml = rows
         .filter(([, v]) => v)
         .map(([label, value]) => `
             <tr>
-                <td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${label}</td>
-                <td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${value}</td>
+                <td style="padding:10px 16px;font-size:13px;color:#64748b;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${escapeHtml(label)}</td>
+                <td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;">${escapeHtml(value)}</td>
             </tr>`).join('');
 
     return `
@@ -23,8 +32,8 @@ function buildEmailHtml({ accentColor, badgeText, title, intro, rows, mapUrl, re
         </div>
         <div style="padding:24px;">
           <span style="display:inline-block;background:${accentColor}1A;color:${accentColor};font-size:12px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;padding:4px 12px;border-radius:999px;">${badgeText}</span>
-          <h1 style="font-size:20px;color:#0f172a;margin:14px 0 6px;">${title}</h1>
-          <p style="font-size:14px;color:#475569;margin:0 0 20px;line-height:1.5;">${intro}</p>
+          <h1 style="font-size:20px;color:#0f172a;margin:14px 0 6px;">${escapeHtml(title)}</h1>
+          <p style="font-size:14px;color:#475569;margin:0 0 20px;line-height:1.5;">${escapeHtml(intro)}</p>
           <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;">
             ${rowsHtml}
           </table>

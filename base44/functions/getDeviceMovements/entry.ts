@@ -2,7 +2,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 const API_BASE = 'https://api.cognosos.net';
 
+// Cache the Cognosos token across invocations of a warm instance —
+// Cognito ID tokens are valid for ~1 hour.
+let cachedToken = null;
+let cachedTokenAt = 0;
+const TOKEN_TTL_MS = 50 * 60 * 1000;
+
 async function getCognososToken() {
+  if (cachedToken && Date.now() - cachedTokenAt < TOKEN_TTL_MS) return cachedToken;
   const configRes = await fetch(`${API_BASE}/config?category=idp`);
   if (!configRes.ok) throw new Error(`Cognosos config fetch failed: ${configRes.status}`);
   const config = await configRes.json();
@@ -29,6 +36,8 @@ async function getCognososToken() {
   const auth = await authRes.json();
   const idToken = auth?.AuthenticationResult?.IdToken;
   if (!idToken) throw new Error('No IdToken');
+  cachedToken = idToken;
+  cachedTokenAt = Date.now();
   return idToken;
 }
 

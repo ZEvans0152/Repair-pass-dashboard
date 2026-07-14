@@ -19,14 +19,23 @@ function formatET(dateStr) {
     }) + ' ET';
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function vehicleRowHtml(v, detail) {
     const name = `${v.year || ''} ${v.make} ${v.model}`.trim();
     return `
         <tr>
-            <td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${name}</td>
-            <td style="padding:10px 16px;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${v.stock_number || '—'}</td>
-            <td style="padding:10px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">${v.dealership || '—'}</td>
-            <td style="padding:10px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">${detail}</td>
+            <td style="padding:10px 16px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${escapeHtml(name)}</td>
+            <td style="padding:10px 16px;font-size:13px;color:#0f172a;border-bottom:1px solid #f1f5f9;white-space:nowrap;">${escapeHtml(v.stock_number || '—')}</td>
+            <td style="padding:10px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">${escapeHtml(v.dealership || '—')}</td>
+            <td style="padding:10px 16px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9;">${escapeHtml(detail)}</td>
         </tr>`;
 }
 

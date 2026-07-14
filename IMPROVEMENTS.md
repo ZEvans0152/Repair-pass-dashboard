@@ -3,6 +3,16 @@
 Findings from a full review of the app source (frontend, entity schemas, and all 15
 backend functions), ordered by priority.
 
+> **Status (2026-07-14):** All non-authentication items have been applied — email
+> HTML escaping (1.3), the dashboard/stats/PDF bug fixes (2.1, 2.2, 2.4), token
+> caching, targeted post-create sync and skip-unchanged writes (§3), unit tests for
+> the sync decision logic, a real README, and GitHub Actions CI (§5, §6).
+> Deliberately **not** applied per owner decision: function auth checks (1.1) and
+> entity RLS (1.2) — the team relies on open access because Base44 user management
+> is cumbersome. Also still open: per-user notification read state (2.3), shared
+> Cognosos helper module (§4 — Base44 functions are single-file), and batched
+> parallel updates inside the sync loop.
+
 ## 1. Security
 
 ### 1.1 Unauthenticated backend functions (highest priority)
